@@ -1,0 +1,10 @@
+## Interface: 20505
+## Title: Badge Tracker
+## Notes: Tracks Badge of Justice boss kills and loot
+## Author: YourName
+## Version: 1.0
+## SavedVariablesPerCharacter: BadgeTrackerDB
+
+LibStub.lua
+LibDBIcon-1.0.lua
+BadgeTracker.lua
