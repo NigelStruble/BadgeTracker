@@ -11,6 +11,7 @@ Thumbs.db
 
 # IDE files
 .vscode/
+.vs/
 .idea/
 *.sublime-project
 *.sublime-workspace
@@ -48,3 +49,7 @@ node_modules/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Future readme files
+CONTRIBUTING.md
+screenshots/README.md
