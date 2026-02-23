@@ -224,6 +224,9 @@ function BadgeTracker:OnLoad()
     -- Check if we need to reset daily data
     self:CheckDailyReset()
     
+    -- Schedule the next reset check based on lockout times
+    self:ScheduleResetCheck()
+    
     -- Register events
     self:RegisterEvents()
     
@@ -270,6 +273,60 @@ function BadgeTracker:RegisterEvents()
     GameTooltip:HookScript("OnHide", function(tooltip)
         tooltip.badgeTrackerModified = false
     end)
+end
+
+-- Schedule a one-time reset check for when lockouts expire
+function BadgeTracker:ScheduleResetCheck()
+    -- Cancel any existing timer
+    if self.resetTimer then
+        self.frame:SetScript("OnUpdate", nil)
+        self.resetTimer = nil
+    end
+    
+    -- Only schedule if we have a stored reset time
+    if not BadgeTrackerDB.nextDailyResetTime and not BadgeTrackerDB.nextWeeklyResetTime then
+        return
+    end
+    
+    -- Find the next reset time (daily or weekly, whichever is sooner)
+    local nextResetTime = nil
+    if BadgeTrackerDB.nextDailyResetTime and BadgeTrackerDB.nextWeeklyResetTime then
+        nextResetTime = math.min(BadgeTrackerDB.nextDailyResetTime, BadgeTrackerDB.nextWeeklyResetTime)
+    elseif BadgeTrackerDB.nextDailyResetTime then
+        nextResetTime = BadgeTrackerDB.nextDailyResetTime
+    elseif BadgeTrackerDB.nextWeeklyResetTime then
+        nextResetTime = BadgeTrackerDB.nextWeeklyResetTime
+    end
+    
+    if not nextResetTime then
+        return
+    end
+    
+    -- Add a 10 second buffer to ensure lockouts have definitely expired
+    local timeUntilReset = (nextResetTime - time()) + 10
+    
+    -- Only schedule if the reset is in the future
+    if timeUntilReset > 0 then
+        self.resetTimer = timeUntilReset
+        
+        self.frame:SetScript("OnUpdate", function(frame, elapsed)
+            if not BadgeTracker.resetTimer then return end
+            
+            BadgeTracker.resetTimer = BadgeTracker.resetTimer - elapsed
+            
+            if BadgeTracker.resetTimer <= 0 then
+                -- Time to check for reset
+                BadgeTracker:CheckDailyReset()
+                
+                -- Clear the timer
+                frame:SetScript("OnUpdate", nil)
+                BadgeTracker.resetTimer = nil
+                
+                -- Schedule the next reset check (in case there are more lockouts)
+                BadgeTracker:ScheduleResetCheck()
+            end
+        end)
+    end
 end
 
 -- Check if we need to reset data (based on lockout resets)
@@ -478,6 +535,9 @@ function BadgeTracker:OnBossKilled(dungeon, bossName)
         if BadgeTracker.mainFrame and BadgeTracker.mainFrame:IsShown() then
             BadgeTracker:UpdateUI()
         end
+        
+        -- Reschedule reset check in case reset times changed
+        self:ScheduleResetCheck()
     end
 end
 
