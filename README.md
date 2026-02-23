@@ -1,6 +1,6 @@
 # Badge of Justice Tracker
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/yourusername/BadgeTracker/releases)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/NigelStruble/BadgeTracker/releases)
 [![WoW](https://img.shields.io/badge/WoW-TBC%20Classic%20Anniversary-orange.svg)](https://worldofwarcraft.blizzard.com/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -59,7 +59,7 @@ A comprehensive World of Warcraft TBC Classic Anniversary addon that helps you t
 ## 📦 Installation
 
 ### Manual Installation
-1. Download the [latest release](https://github.com/yourusername/BadgeTracker/releases)
+1. Download the [latest release](https://github.com/NigelStruble/BadgeTracker/releases)
 2. Extract the `BadgeTracker` folder
 3. Place it in your WoW addons directory:
    - **Windows**: `C:\Program Files (x86)\World of Warcraft\_classic_\Interface\AddOns\`
@@ -177,7 +177,7 @@ All tracking data is saved per-character and persists across sessions. The addon
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ### Ways to Help
-- 🐛 Report bugs in [Issues](https://github.com/yourusername/BadgeTracker/issues)
+- 🐛 Report bugs in [Issues](https://github.com/NigelStruble/BadgeTracker/issues)
 - 💡 Suggest features
 - 📝 Improve documentation  
 - 🔧 Submit pull requests
@@ -199,8 +199,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 💬 Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/BadgeTracker/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/BadgeTracker/discussions)
+- **Issues**: [GitHub Issues](https://github.com/NigelStruble/BadgeTracker/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/NigelStruble/BadgeTracker/discussions)
 
 ---
 
