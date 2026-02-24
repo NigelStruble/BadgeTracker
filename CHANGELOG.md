@@ -104,6 +104,16 @@ BadgeTrackerDB = {
 - **Combat Lockdown**: Close button works during combat
 - **Column Layout**: Fixed Karazhan overlapping with other dungeons in UI
 
+### Performance Improvements
+- **Lockout-Based Resets**: Changed from time-based to lockout-existence-based reset detection
+  - Only resets when lockouts are actually gone, not based on stored timestamps
+  - Eliminates early reset bugs caused by time comparison edge cases
+- **Efficient Timer Scheduling**: Replaced OnUpdate frame polling with C_Timer.NewTimer()
+  - Changed from 60+ FPS frame checking to one-time callback execution
+  - Schedules timer for exact lockout expiry + 10 second buffer
+  - Zero CPU overhead between resets
+- **Smart Rescheduling**: Timer updates when new lockouts are acquired
+
 ### Known Limitations
 - Cannot track bosses in raids with instanceType other than "party" (5-man)
 - Karazhan tracking requires manual enabling (first badge loot)

@@ -279,7 +279,7 @@ end
 function BadgeTracker:ScheduleResetCheck()
     -- Cancel any existing timer
     if self.resetTimer then
-        self.frame:SetScript("OnUpdate", nil)
+        self.resetTimer:Cancel()
         self.resetTimer = nil
     end
     
@@ -307,24 +307,16 @@ function BadgeTracker:ScheduleResetCheck()
     
     -- Only schedule if the reset is in the future
     if timeUntilReset > 0 then
-        self.resetTimer = timeUntilReset
-        
-        self.frame:SetScript("OnUpdate", function(frame, elapsed)
-            if not BadgeTracker.resetTimer then return end
+        -- Use C_Timer.After for a one-time callback
+        self.resetTimer = C_Timer.NewTimer(timeUntilReset, function()
+            -- Time to check for reset
+            BadgeTracker:CheckDailyReset()
             
-            BadgeTracker.resetTimer = BadgeTracker.resetTimer - elapsed
+            -- Clear the timer reference
+            BadgeTracker.resetTimer = nil
             
-            if BadgeTracker.resetTimer <= 0 then
-                -- Time to check for reset
-                BadgeTracker:CheckDailyReset()
-                
-                -- Clear the timer
-                frame:SetScript("OnUpdate", nil)
-                BadgeTracker.resetTimer = nil
-                
-                -- Schedule the next reset check (in case there are more lockouts)
-                BadgeTracker:ScheduleResetCheck()
-            end
+            -- Schedule the next reset check (in case there are more lockouts)
+            BadgeTracker:ScheduleResetCheck()
         end)
     end
 end
@@ -335,6 +327,8 @@ function BadgeTracker:CheckDailyReset()
     local numSavedInstances = GetNumSavedInstances()
     local dailyResetTime = nil
     local weeklyResetTime = nil
+    local foundDailyLockout = false
+    local foundWeeklyLockout = false
     
     for i = 1, numSavedInstances do
         local name, id, reset, difficulty, locked = GetSavedInstanceInfo(i)
@@ -344,11 +338,13 @@ function BadgeTracker:CheckDailyReset()
             
             -- Heroic dungeons (difficulty 174) - daily reset
             if difficulty == 174 then
+                foundDailyLockout = true
                 if not dailyResetTime then
                     dailyResetTime = absoluteResetTime
                 end
             -- Raids (difficulty 175 for 10-man, 176 for 25-man) - weekly reset
             elseif difficulty == 175 or difficulty == 176 then
+                foundWeeklyLockout = true
                 if not weeklyResetTime then
                     weeklyResetTime = absoluteResetTime
                 end
@@ -362,16 +358,10 @@ function BadgeTracker:CheckDailyReset()
     end
     
     -- Handle daily reset (heroic dungeons)
-    if dailyResetTime then
-        local shouldReset = false
-        
+    -- ONLY reset if we had kills tracked AND now have no lockouts
+    if foundDailyLockout then
+        -- We have lockouts, update the stored reset time
         if not BadgeTrackerDB.nextDailyResetTime then
-            BadgeTrackerDB.nextDailyResetTime = dailyResetTime
-            -- Never reset when setting the time for the first time
-            shouldReset = false
-        elseif time() >= BadgeTrackerDB.nextDailyResetTime then
-            -- Stored time has passed - lockouts have reset
-            shouldReset = true
             BadgeTrackerDB.nextDailyResetTime = dailyResetTime
         else
             -- Keep whichever reset time is sooner
@@ -379,43 +369,34 @@ function BadgeTracker:CheckDailyReset()
                 BadgeTrackerDB.nextDailyResetTime = dailyResetTime
             end
         end
-        
-        if shouldReset then
+    else
+        -- No daily lockouts found
+        -- Only reset if we HAD tracking data (meaning we had lockouts before and now they're gone)
+        if next(BadgeTrackerDB.dailyKills) ~= nil then
             DEFAULT_CHAT_FRAME:AddMessage("|cffff6600[BadgeTracker]|r Daily heroic dungeons have reset!")
             BadgeTrackerDB.dailyKills = {}
-        end
-    else
-        -- If we have a stored reset time, check if it has passed
-        if BadgeTrackerDB.nextDailyResetTime then
-            if time() >= BadgeTrackerDB.nextDailyResetTime then
-                DEFAULT_CHAT_FRAME:AddMessage("|cffff6600[BadgeTracker]|r Daily heroic dungeons have reset!")
-                BadgeTrackerDB.dailyKills = {}
-                BadgeTrackerDB.nextDailyResetTime = nil
-            end
-        else
-            -- No stored time and no lockouts - use date-based fallback
-            local currentDate = date("%Y-%m-%d")
-            if not BadgeTrackerDB.lastResetDate or BadgeTrackerDB.lastResetDate ~= currentDate then
-                BadgeTrackerDB.dailyKills = {}
-                BadgeTrackerDB.lastResetDate = currentDate
-                BadgeTrackerDB.nextDailyResetTime = nil
-            end
+            BadgeTrackerDB.nextDailyResetTime = nil
         end
     end
     
     -- Handle weekly reset (raids)
-    if weeklyResetTime then
+    if foundWeeklyLockout then
+        -- We have lockouts, update the stored reset time
         if not BadgeTrackerDB.nextWeeklyResetTime then
-            BadgeTrackerDB.nextWeeklyResetTime = weeklyResetTime
-        elseif time() >= BadgeTrackerDB.nextWeeklyResetTime then
-            DEFAULT_CHAT_FRAME:AddMessage("|cffff6600[BadgeTracker]|r Weekly raids have reset!")
-            BadgeTrackerDB.weeklyKills = {}
             BadgeTrackerDB.nextWeeklyResetTime = weeklyResetTime
         else
             -- Keep whichever reset time is sooner
             if weeklyResetTime < BadgeTrackerDB.nextWeeklyResetTime then
                 BadgeTrackerDB.nextWeeklyResetTime = weeklyResetTime
             end
+        end
+    else
+        -- No weekly lockouts found
+        -- Only reset if we HAD tracking data
+        if next(BadgeTrackerDB.weeklyKills) ~= nil then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff6600[BadgeTracker]|r Weekly raids have reset!")
+            BadgeTrackerDB.weeklyKills = {}
+            BadgeTrackerDB.nextWeeklyResetTime = nil
         end
     end
 end

@@ -44,10 +44,12 @@ A comprehensive World of Warcraft TBC Classic Anniversary addon that helps you t
 - **Daily Summary**: Quick overview of kills and loots at the top
 
 ### 🔄 Smart Reset System
-- **Automatic Daily Reset**: Syncs with your actual heroic lockout times
-- **Weekly Raid Tracking**: Separate tracking for Karazhan
+- **Lockout-Based Reset**: Only resets when heroic lockouts actually expire (not time-based)
+- **Efficient Scheduling**: Uses C_Timer for precise one-time checks when lockouts expire
+- **Weekly Raid Tracking**: Separate tracking for Karazhan with weekly reset
 - **Persistent Data**: Tracks across logins and /reloads
 - **Manual Override**: Reset anytime with confirmation dialog
+- **No Early Resets**: Only clears tracking when lockouts are completely gone
 
 ### 🗺️ Minimap Integration
 - **Draggable Icon**: Position it anywhere around your minimap
@@ -141,8 +143,15 @@ Special alerts for:
 ### How It Works
 - Monitors `COMBAT_LOG_EVENT_UNFILTERED` for boss deaths
 - Parses `CHAT_MSG_LOOT` for badge pickups
-- Uses actual instance lockout times for resets (difficulty ID 174 for heroics)
-- Stores data per-character using `SavedVariablesPerCharacter`
+- Uses lockout existence (not time) for reliable reset detection
+- Stores data per-character
+
+### Reset Logic
+The addon uses a smart lockout-based reset system:
+1. **When lockouts exist**: Updates next reset time, preserves tracking data
+2. **When lockouts disappear**: Immediately clears tracking (actual reset)
+3. **Timer scheduling**: Creates one-time callback at lockout expiry + 10 second buffer
+4. **CPU efficient**: No frame-by-frame checking, fires exactly once when needed
 
 ### Data Storage
 All tracking data is saved per-character and persists across sessions. The addon automatically:
@@ -159,9 +168,10 @@ All tracking data is saved per-character and persists across sessions. The addon
 4. ✅ Check for Lua errors (install BugSack to see them)
 
 ### Reset Not Working?
-- The addon resets automatically when your lockouts expire
+- The addon resets automatically when ALL heroic lockouts expire (not time-based)
+- A scheduled timer checks 10 seconds after your lockouts expire
 - If you want to reset manually, use the reset button or right-click the minimap icon
-- Make sure you have at least one heroic lockout for automatic resets to work
+- The reset is based on lockout existence, so it won't reset early even if you're logged in
 
 ### Minimap Icon Missing?
 - Check the checkbox at the top-right of the tracker window
