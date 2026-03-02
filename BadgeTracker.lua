@@ -80,8 +80,6 @@ local BADGE_BOSSES_PHASE1 = {
         "Murmur"
     },
     ["Tempest Keep: The Mechanar"] = {
-        "Gatewatcher Gyro-Kill",
-        "Gatewatcher Iron-Hand",
         "Mechano-Lord Capacitus",
         "Nethermancer Sepethrea",
         "Pathaleon the Calculator"
@@ -130,7 +128,9 @@ local BADGE_RAIDS_PHASE4 = {
         "Maiden of Virtue",
         "The Crone",  -- Opera Event - Wizard of Oz
         "The Big Bad Wolf",  -- Opera Event - Red Riding Hood
-        "Romulo and Julianne",  -- Opera Event - Romeo and Juliet
+        "Romulo",  -- Opera Event - Romeo and Juliet (first kill)
+        "Julianne",  -- Opera Event - Romeo and Juliet (second kill)
+        "Nightbane",  -- Optional boss (summoned)
         "The Curator",
         "Shade of Aran",
         "Terestian Illhoof",
@@ -176,28 +176,57 @@ local function GetBadgeBosses()
     return BadgeTracker:GetBadgeBosses()
 end
 
+-- Helper function for debug messages
+local function DebugPrint(msg)
+    if BadgeTrackerDB and BadgeTrackerDB.debugMode then
+        DEFAULT_CHAT_FRAME:AddMessage("[BadgeTracker Debug] " .. msg)
+    end
+end
+
 -- Initialize saved variables
 function BadgeTracker:OnLoad()
+    DebugPrint("=== OnLoad called ===")
+    
     if not BadgeTrackerDB then
+        DebugPrint("No SavedVariables found, creating new")
         BadgeTrackerDB = {
             dailyKills = {},
             weeklyKills = {},
             lastResetDate = date("%Y-%m-%d"),
-            nextDailyResetTime = nil,
-            nextWeeklyResetTime = nil,
-            karazhanBadgesEnabled = false,  -- Will be set to true when first badge is looted
+            karazhanBadgesEnabled = false,
+            debugMode = false,  -- Toggle debug messages
             minimap = {
                 hide = false,
                 minimapPos = 225
             }
         }
+    else
+        DebugPrint("SavedVariables loaded")
+        
+        -- Count daily kills
+        local dailyCount = 0
+        for dungeon, bosses in pairs(BadgeTrackerDB.dailyKills or {}) do
+            for boss, data in pairs(bosses) do
+                dailyCount = dailyCount + 1
+            end
+        end
+        DebugPrint("dailyKills has " .. dailyCount .. " boss(es) tracked")
+        
+        -- Count weekly kills
+        local weeklyCount = 0
+        for raid, bosses in pairs(BadgeTrackerDB.weeklyKills or {}) do
+            for boss, data in pairs(bosses) do
+                weeklyCount = weeklyCount + 1
+            end
+        end
+        DebugPrint("weeklyKills has " .. weeklyCount .. " boss(es) tracked")
+        
+        DebugPrint("lastResetDate: " .. tostring(BadgeTrackerDB.lastResetDate))
     end
     
-    -- Migrate old nextResetTime to nextDailyResetTime
-    if BadgeTrackerDB.nextResetTime then
-        BadgeTrackerDB.nextDailyResetTime = BadgeTrackerDB.nextResetTime
-        BadgeTrackerDB.nextResetTime = nil
-    end
+    -- Mark as loaded so events can start processing
+    BadgeTracker.isLoaded = true
+    
     
     -- Ensure minimap settings exist
     if not BadgeTrackerDB.minimap then
@@ -221,11 +250,10 @@ function BadgeTracker:OnLoad()
     -- Note: nextDailyResetTime and nextWeeklyResetTime can be nil - that's okay!
     -- They will be set when we first run a dungeon/raid
     
-    -- Check if we need to reset daily data
-    self:CheckDailyReset()
-    
-    -- Schedule the next reset check based on lockout times
-    self:ScheduleResetCheck()
+    -- Request raid info and wait for UPDATE_INSTANCE_INFO event
+    DebugPrint("Login: Requesting raid info")
+    BadgeTracker.waitingForInstanceInfo = true
+    RequestRaidInfo()
     
     -- Register events
     self:RegisterEvents()
@@ -242,10 +270,28 @@ function BadgeTracker:RegisterEvents()
     self.frame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
     self.frame:RegisterEvent("CHAT_MSG_LOOT")
     self.frame:RegisterEvent("PLAYER_LOGIN")
+    self.frame:RegisterEvent("UPDATE_INSTANCE_INFO")
     
     self.frame:SetScript("OnEvent", function(frame, event, ...)
         if event == "PLAYER_LOGIN" then
             BadgeTracker:OnLoad()
+        elseif event == "UPDATE_INSTANCE_INFO" then
+            -- Lockout info has been updated (happens on zone change, boss kills, etc.)
+            -- Only process after OnLoad has completed
+            if not BadgeTracker.isLoaded then
+                DebugPrint("UPDATE_INSTANCE_INFO received but addon not loaded yet, ignoring")
+                return
+            end
+            
+            -- Always reschedule to keep timer in sync with current lockouts
+            DebugPrint("UPDATE_INSTANCE_INFO received, rescheduling")
+            BadgeTracker.waitingForInstanceInfo = false
+            BadgeTracker:ScheduleResetCheck()
+            
+            -- Update UI if it's open (data may have been reset)
+            if BadgeTracker.mainFrame and BadgeTracker.mainFrame:IsShown() then
+                BadgeTracker:UpdateUI()
+            end
         elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
             local success, err = pcall(BadgeTracker.OnCombatLogEvent, BadgeTracker, ...)
             if not success then
@@ -265,140 +311,192 @@ function BadgeTracker:RegisterEvents()
         BadgeTracker:OnTooltipSetUnit(tooltip)
     end)
     
+    -- Update tooltip periodically while it's shown (to catch loot changes)
+    GameTooltip:HookScript("OnUpdate", function(tooltip, elapsed)
+        if not tooltip.badgeTrackerModified then return end
+        
+        -- Update every 0.5 seconds
+        tooltip.badgeTrackerUpdateTimer = (tooltip.badgeTrackerUpdateTimer or 0) + elapsed
+        if tooltip.badgeTrackerUpdateTimer >= 0.5 then
+            tooltip.badgeTrackerUpdateTimer = 0
+            
+            -- Get the unit the tooltip is showing
+            local _, unit = tooltip:GetUnit()
+            if not unit then
+                unit = "mouseover"
+            end
+            
+            -- Only refresh if the unit still exists
+            if UnitExists(unit) then
+                -- Clear modified flag so OnTooltipSetUnit will run again
+                tooltip.badgeTrackerModified = false
+                
+                -- Force tooltip refresh
+                tooltip:SetUnit(unit)
+            end
+        end
+    end)
+    
     -- Clear the modification flag when tooltip is cleared
     GameTooltip:HookScript("OnTooltipCleared", function(tooltip)
         tooltip.badgeTrackerModified = false
+        tooltip.badgeTrackerUpdateTimer = 0
     end)
     
     GameTooltip:HookScript("OnHide", function(tooltip)
         tooltip.badgeTrackerModified = false
+        tooltip.badgeTrackerUpdateTimer = 0
     end)
 end
 
 -- Schedule a one-time reset check for when lockouts expire
 function BadgeTracker:ScheduleResetCheck()
-    -- Cancel any existing timer
-    if self.resetTimer then
-        self.resetTimer:Cancel()
-        self.resetTimer = nil
-    end
+    -- Get current reset times from actual lockouts
+    local dailyResetTime, weeklyResetTime = self:CheckDailyReset()
     
-    -- Only schedule if we have a stored reset time
-    if not BadgeTrackerDB.nextDailyResetTime and not BadgeTrackerDB.nextWeeklyResetTime then
+    if not dailyResetTime and not weeklyResetTime then
+        DebugPrint("No lockouts found, not scheduling timer")
         return
     end
     
-    -- Find the next reset time (daily or weekly, whichever is sooner)
-    local nextResetTime = nil
-    if BadgeTrackerDB.nextDailyResetTime and BadgeTrackerDB.nextWeeklyResetTime then
-        nextResetTime = math.min(BadgeTrackerDB.nextDailyResetTime, BadgeTrackerDB.nextWeeklyResetTime)
-    elseif BadgeTrackerDB.nextDailyResetTime then
-        nextResetTime = BadgeTrackerDB.nextDailyResetTime
-    elseif BadgeTrackerDB.nextWeeklyResetTime then
-        nextResetTime = BadgeTrackerDB.nextWeeklyResetTime
+    -- Find the next reset time (whichever is sooner)
+    local nextResetTime = dailyResetTime
+    if weeklyResetTime then
+        nextResetTime = nextResetTime and math.min(nextResetTime, weeklyResetTime) or weeklyResetTime
     end
     
-    if not nextResetTime then
-        return
-    end
-    
-    -- Add a 10 second buffer to ensure lockouts have definitely expired
+    -- Add 10 second buffer
     local timeUntilReset = (nextResetTime - time()) + 10
     
-    -- Only schedule if the reset is in the future
+    DebugPrint("ScheduleResetCheck: Next reset in " .. timeUntilReset .. " seconds")
+    
     if timeUntilReset > 0 then
-        -- Use C_Timer.After for a one-time callback
+        -- Check if we already have a timer scheduled for about the same time
+        if self.scheduledResetTime and math.abs(self.scheduledResetTime - nextResetTime) < 60 then
+            DebugPrint("Timer already scheduled, skipping")
+            return
+        end
+        
+        -- Cancel existing timer if any
+        if self.resetTimer then
+            self.resetTimer:Cancel()
+        end
+        
+        -- Schedule new timer
+        self.scheduledResetTime = nextResetTime
         self.resetTimer = C_Timer.NewTimer(timeUntilReset, function()
-            -- Time to check for reset
-            BadgeTracker:CheckDailyReset()
+            DebugPrint("=== TIMER FIRED ===")
             
-            -- Clear the timer reference
+            -- Request fresh raid info and wait for UPDATE_INSTANCE_INFO event
+            -- The event handler will call ScheduleResetCheck which will check/reset
             BadgeTracker.resetTimer = nil
+            BadgeTracker.scheduledResetTime = nil
+            BadgeTracker.waitingForInstanceInfo = true
+            RequestRaidInfo()
             
-            -- Schedule the next reset check (in case there are more lockouts)
-            BadgeTracker:ScheduleResetCheck()
+            -- Also update UI immediately if open (will update again after event)
+            if BadgeTracker.mainFrame and BadgeTracker.mainFrame:IsShown() then
+                BadgeTracker:UpdateUI()
+            end
         end)
+        
+        DebugPrint("Timer scheduled!")
     end
 end
 
--- Check if we need to reset data (based on lockout resets)
+-- Check if we need to reset data (based on lockout presence)
+-- Returns the reset times for scheduling purposes
+-- NOTE: Caller should have called RequestRaidInfo() and waited for UPDATE_INSTANCE_INFO
 function BadgeTracker:CheckDailyReset()
-    -- Handle both daily (heroic dungeons) and weekly (raids) resets
     local numSavedInstances = GetNumSavedInstances()
     local dailyResetTime = nil
     local weeklyResetTime = nil
     local foundDailyLockout = false
     local foundWeeklyLockout = false
     
+    DebugPrint("CheckDailyReset: Checking " .. numSavedInstances .. " saved instances")
+    
+    -- List of raid names for weekly reset detection (TBC Anniversary uses diff 3/4 for raids)
+    local raidNames = {
+        ["Karazhan"] = true,
+        ["Gruul's Lair"] = true,
+        ["Magtheridon's Lair"] = true,
+        ["Serpentshrine Cavern"] = true,
+        ["Tempest Keep"] = true,
+        ["The Battle for Mount Hyjal"] = true,
+        ["Black Temple"] = true,
+        ["Sunwell Plateau"] = true,
+        ["Zul'Aman"] = true
+    }
+    
+    -- Scan for lockouts
     for i = 1, numSavedInstances do
         local name, id, reset, difficulty, locked = GetSavedInstanceInfo(i)
         
         if reset and reset > 0 then
             local absoluteResetTime = time() + reset
             
-            -- Heroic dungeons (difficulty 174) - daily reset
+            DebugPrint("  " .. tostring(name) .. " (diff " .. tostring(difficulty) .. ") resets in " .. reset .. "s")
+            
             if difficulty == 174 then
+                -- Heroic dungeon (TBC Anniversary)
                 foundDailyLockout = true
-                if not dailyResetTime then
-                    dailyResetTime = absoluteResetTime
-                end
-            -- Raids (difficulty 175 for 10-man, 176 for 25-man) - weekly reset
-            elseif difficulty == 175 or difficulty == 176 then
+                dailyResetTime = dailyResetTime and math.min(dailyResetTime, absoluteResetTime) or absoluteResetTime
+            elseif raidNames[name] then
+                -- Raid (weekly reset) - check by name since difficulty IDs are ambiguous
                 foundWeeklyLockout = true
-                if not weeklyResetTime then
-                    weeklyResetTime = absoluteResetTime
+                weeklyResetTime = weeklyResetTime and math.min(weeklyResetTime, absoluteResetTime) or absoluteResetTime
+            end
+        end
+    end
+    
+    -- Simple reset logic: No lockouts + has data = reset
+    -- BUT: Don't reset if we recently killed a boss (lockout might not have appeared yet)
+    if not foundDailyLockout and next(BadgeTrackerDB.dailyKills) ~= nil then
+        -- Check if any boss was killed recently (within 10 minutes)
+        local recentKill = false
+        local currentTime = time()
+        for dungeon, bosses in pairs(BadgeTrackerDB.dailyKills) do
+            for boss, data in pairs(bosses) do
+                if data.killTime and (currentTime - data.killTime) < 600 then  -- 10 minutes
+                    recentKill = true
+                    DebugPrint("Boss killed recently (" .. boss .. " " .. (currentTime - data.killTime) .. "s ago), not resetting")
+                    break
                 end
             end
+            if recentKill then break end
         end
         
-        -- Break if we found both
-        if dailyResetTime and weeklyResetTime then
-            break
-        end
-    end
-    
-    -- Handle daily reset (heroic dungeons)
-    -- ONLY reset if we had kills tracked AND now have no lockouts
-    if foundDailyLockout then
-        -- We have lockouts, update the stored reset time
-        if not BadgeTrackerDB.nextDailyResetTime then
-            BadgeTrackerDB.nextDailyResetTime = dailyResetTime
-        else
-            -- Keep whichever reset time is sooner
-            if dailyResetTime < BadgeTrackerDB.nextDailyResetTime then
-                BadgeTrackerDB.nextDailyResetTime = dailyResetTime
-            end
-        end
-    else
-        -- No daily lockouts found
-        -- Only reset if we HAD tracking data (meaning we had lockouts before and now they're gone)
-        if next(BadgeTrackerDB.dailyKills) ~= nil then
+        if not recentKill then
+            DebugPrint("No daily lockouts found and no recent kills, resetting dailyKills")
             DEFAULT_CHAT_FRAME:AddMessage("|cffff6600[BadgeTracker]|r Daily heroic dungeons have reset!")
             BadgeTrackerDB.dailyKills = {}
-            BadgeTrackerDB.nextDailyResetTime = nil
         end
     end
     
-    -- Handle weekly reset (raids)
-    if foundWeeklyLockout then
-        -- We have lockouts, update the stored reset time
-        if not BadgeTrackerDB.nextWeeklyResetTime then
-            BadgeTrackerDB.nextWeeklyResetTime = weeklyResetTime
-        else
-            -- Keep whichever reset time is sooner
-            if weeklyResetTime < BadgeTrackerDB.nextWeeklyResetTime then
-                BadgeTrackerDB.nextWeeklyResetTime = weeklyResetTime
+    if not foundWeeklyLockout and next(BadgeTrackerDB.weeklyKills) ~= nil then
+        -- Check if any boss was killed recently (within 10 minutes)
+        local recentKill = false
+        local currentTime = time()
+        for raid, bosses in pairs(BadgeTrackerDB.weeklyKills) do
+            for boss, data in pairs(bosses) do
+                if data.killTime and (currentTime - data.killTime) < 600 then  -- 10 minutes
+                    recentKill = true
+                    DebugPrint("Raid boss killed recently (" .. boss .. " " .. (currentTime - data.killTime) .. "s ago), not resetting")
+                    break
+                end
             end
+            if recentKill then break end
         end
-    else
-        -- No weekly lockouts found
-        -- Only reset if we HAD tracking data
-        if next(BadgeTrackerDB.weeklyKills) ~= nil then
+        
+        if not recentKill then
+            DebugPrint("No weekly lockouts found and no recent kills, resetting weeklyKills")
             DEFAULT_CHAT_FRAME:AddMessage("|cffff6600[BadgeTracker]|r Weekly raids have reset!")
             BadgeTrackerDB.weeklyKills = {}
-            BadgeTrackerDB.nextWeeklyResetTime = nil
         end
     end
+    
+    return dailyResetTime, weeklyResetTime
 end
 
 -- Handle combat log events to detect boss kills
@@ -447,7 +545,8 @@ end
 
 -- Handle boss kill
 function BadgeTracker:OnBossKilled(dungeon, bossName)
-    self:CheckDailyReset()
+    -- Don't check for reset here - lockouts haven't loaded yet!
+    -- Only check on login (after delay) and when timer fires
     
     -- Check if this is a Karazhan boss - if so, enable Karazhan badge tracking
     if BADGE_RAIDS_PHASE4[dungeon] and not BadgeTrackerDB.karazhanBadgesEnabled then
@@ -491,6 +590,9 @@ function BadgeTracker:OnBossKilled(dungeon, bossName)
             killTime = time()
         }
         
+        DebugPrint("Saved boss kill: " .. dungeon .. " - " .. bossName)
+        DebugPrint("Storage table: " .. (isRaid and "weeklyKills" or "dailyKills"))
+        
         -- Alert player to loot badge
         local alertMessage = "Boss killed! Don't forget to loot your Badge of Justice!"
         if bossName == "Nazan" then
@@ -517,8 +619,11 @@ function BadgeTracker:OnBossKilled(dungeon, bossName)
             BadgeTracker:UpdateUI()
         end
         
-        -- Reschedule reset check in case reset times changed
-        self:ScheduleResetCheck()
+        -- Request updated raid info after boss kill
+        -- The UPDATE_INSTANCE_INFO event will trigger scheduling
+        DebugPrint("Post-boss-kill: Requesting raid info")
+        BadgeTracker.waitingForInstanceInfo = true
+        RequestRaidInfo()
     end
 end
 
@@ -558,7 +663,7 @@ function BadgeTracker:OnLootMsg(message)
             looterName = string.match(message, "^(.+) receives loot:")
         end
         
-        -- DEFAULT_CHAT_FRAME:AddMessage("[BadgeTracker Debug] Extracted name: " .. tostring(looterName))
+        -- DebugPrint("Extracted name: " .. tostring(looterName))
         
         if looterName then
             -- Find the most recently killed boss where this person hasn't looted yet
@@ -597,8 +702,8 @@ function BadgeTracker:OnLootMsg(message)
             if mostRecentBoss and mostRecentDungeon then
                 local data = allKills[mostRecentDungeon][mostRecentBoss]
                 
-                -- DEFAULT_CHAT_FRAME:AddMessage("[BadgeTracker Debug] Party members for " .. mostRecentBoss .. ": " .. (data.partyMembers and table.concat(data.partyMembers, ", ") or "none"))
-                -- DEFAULT_CHAT_FRAME:AddMessage("[BadgeTracker Debug] Marking " .. looterName .. " as looted from " .. mostRecentBoss)
+                -- DebugPrint("Party members for " .. mostRecentBoss .. ": " .. (data.partyMembers and table.concat(data.partyMembers, ", ") or "none"))
+                -- DebugPrint("Marking " .. looterName .. " as looted from " .. mostRecentBoss)
                 
                 data.whoLooted[looterName] = true
                 
@@ -905,7 +1010,14 @@ function BadgeTracker:OnTooltipSetUnit(tooltip)
     -- Check if we've already modified this tooltip
     if tooltip.badgeTrackerModified then return end
     
-    local unitName = (UnitName("mouseover"))
+    -- Get the unit from the tooltip (works for both world units and unit frames)
+    local _, unit = tooltip:GetUnit()
+    if not unit then
+        -- Fallback to mouseover for world units
+        unit = "mouseover"
+    end
+    
+    local unitName = (UnitName(unit))
     if not unitName then return end
     
     local BADGE_BOSSES = BadgeTracker:GetBadgeBosses()
@@ -965,7 +1077,15 @@ end
 SLASH_BADGE1 = "/badge"
 SLASH_BADGE2 = "/badgetracker"
 SlashCmdList["BADGE"] = function(msg)
-    BadgeTracker:ToggleUI()
+    msg = msg:lower():trim()
+    
+    if msg == "debug" then
+        BadgeTrackerDB.debugMode = not BadgeTrackerDB.debugMode
+        local status = BadgeTrackerDB.debugMode and "enabled" or "disabled"
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff6600[BadgeTracker]|r Debug mode " .. status)
+    else
+        BadgeTracker:ToggleUI()
+    end
 end
 
 -- Create confirmation dialog for reset

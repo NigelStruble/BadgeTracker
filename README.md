@@ -144,7 +144,8 @@ Special alerts for:
 - Monitors `COMBAT_LOG_EVENT_UNFILTERED` for boss deaths
 - Parses `CHAT_MSG_LOOT` for badge pickups
 - Uses lockout existence (not time) for reliable reset detection
-- Stores data per-character
+- Schedules one-time timer with `C_Timer.NewTimer()` for exact reset timing
+- Stores data per-character using `SavedVariablesPerCharacter`
 
 ### Reset Logic
 The addon uses a smart lockout-based reset system:
