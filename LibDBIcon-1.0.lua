@@ -8,7 +8,10 @@ local lib = LibStub:NewLibrary(DBICON10, DBICON10_MINOR)
 if not lib then return end
 
 lib.objects = lib.objects or {}
-lib.callbacks = lib.callbacks or LibStub:GetLibrary("CallbackHandler-1.0"):New(lib)
+-- NOTE: This simplified LibDBIcon does not fire callbacks, so it does not
+-- depend on CallbackHandler-1.0. Do not re-add a GetLibrary("CallbackHandler-1.0")
+-- call here unless CallbackHandler-1.0 is bundled and loaded in the .toc, or the
+-- addon will error on load whenever no other addon happens to provide it.
 local next, pairs = next, pairs
 
 function lib:Register(name, object, db)

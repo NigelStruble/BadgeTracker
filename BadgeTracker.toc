@@ -1,7 +1,7 @@
-## Interface: 20505
+## Interface: 20506
 ## Title: Badge Tracker
 ## Notes: Tracks Badge of Justice boss kills and loot
-## Author: YourName
+## Author: Vedek
 ## Version: 1.0
 ## SavedVariablesPerCharacter: BadgeTrackerDB
 
